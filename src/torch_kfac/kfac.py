@@ -7,7 +7,7 @@ from torch.optim.optimizer import Optimizer
 class KFAC(Optimizer):
 
     def __init__(self, net, eps, sua=False, pi=False, update_freq=1,
-                 alpha=1.0, constraint_norm=False):
+                 alpha=1.0, constraint_norm=False, centered_cov=False):
         """ K-FAC Preconditionner for Linear and Conv2d layers.
 
         Computes the K-FAC of the second moment of the gradients.
@@ -29,6 +29,7 @@ class KFAC(Optimizer):
         self.update_freq = update_freq
         self.alpha = alpha
         self.constraint_norm = constraint_norm
+        self.centered_cov = centered_cov
         self.params = []
         self._fwd_handles = []
         self._bwd_handles = []
@@ -170,6 +171,8 @@ class KFAC(Optimizer):
         if mod.bias is not None:
             ones = torch.ones_like(x[:1])
             x = torch.cat([x, ones], dim=0)
+        if self.centered_cov:
+            x = x - x.mean(dim=-1)[:, None]
         if self._iteration_counter == 0:
             state['xxt'] = torch.mm(x, x.t()) / N
         else:
@@ -184,6 +187,8 @@ class KFAC(Optimizer):
         else:
             gy = gy.detach().flatten(end_dim=-2).t()
             state['num_locations'] = 1
+        if self.centered_cov:
+            gy = gy - gy.mean(dim=-1)[:, None]
         if self._iteration_counter == 0:
             state['ggt'] = torch.mm(gy, gy.t()) / N
         else:
