@@ -154,6 +154,7 @@ class KFAC(Optimizer):
         mod = group['mod']
         x = self.state[group['mod']]['x']
         gy = self.state[group['mod']]['gy']
+        N = x.shape[0]
         # Computation of xxt
         if group['layer_type'] == 'Conv2d':
             if not self.sua:
@@ -163,30 +164,30 @@ class KFAC(Optimizer):
                 x = x.view(x.shape[0], x.shape[1], -1)
             x = x.detach().permute(1, 0, 2).contiguous().view(x.shape[1], -1)
         else:
-            x = x.detach().t()
+            x = x.detach().flatten(end_dim=-2).t()
         if mod.bias is not None:
             ones = torch.ones_like(x[:1])
             x = torch.cat([x, ones], dim=0)
         if self._iteration_counter == 0:
-            state['xxt'] = torch.mm(x, x.t()) / float(x.shape[1])
+            state['xxt'] = torch.mm(x, x.t()) / N
         else:
             state['xxt'].addmm_(mat1=x, mat2=x.t(),
                                 beta=(1. - self.alpha),
-                                alpha=self.alpha / float(x.shape[1]))
+                                alpha=self.alpha / N)
         # Computation of ggt
         if group['layer_type'] == 'Conv2d':
             gy = gy.detach().permute(1, 0, 2, 3)
             state['num_locations'] = gy.shape[2] * gy.shape[3]
             gy = gy.contiguous().view(gy.shape[0], -1)
         else:
-            gy = gy.detach().t()
+            gy = gy.detach().flatten(end_dim=-2).t()
             state['num_locations'] = 1
         if self._iteration_counter == 0:
-            state['ggt'] = torch.mm(gy, gy.t()) / float(gy.shape[1])
+            state['ggt'] = torch.mm(gy, gy.t()) / N
         else:
             state['ggt'].addmm_(mat1=gy, mat2=gy.t(),
                                 beta=(1. - self.alpha),
-                                alpha=self.alpha / float(gy.shape[1]))
+                                alpha=self.alpha / N)
 
     def _inv_covs(self, xxt, ggt, num_locations):
         """Inverses the covariances."""
