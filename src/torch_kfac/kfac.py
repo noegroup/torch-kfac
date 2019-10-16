@@ -36,6 +36,8 @@ class KFAC(Optimizer):
         for mod in net.modules():
             mod_class = mod.__class__.__name__
             if mod_class in ['Linear', 'Conv2d']:
+                if not mod.weight.requires_grad:
+                    continue
                 handle = mod.register_forward_pre_hook(self._save_input)
                 self._fwd_handles.append(handle)
                 handle = mod.register_backward_hook(self._save_grad_output)
