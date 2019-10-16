@@ -45,7 +45,7 @@ class KFAC(Optimizer):
                     params.append(mod.bias)
                 d = {'params': params, 'mod': mod, 'layer_type': mod_class}
                 self.params.append(d)
-        super(KFAC, self).__init__(self.params, {})
+        super().__init__(self.params, {})
 
     def step(self, update_stats=True, update_params=True):
         """Performs one step of preconditioning."""
@@ -75,11 +75,11 @@ class KFAC(Optimizer):
                 # Updating gradients
                 if self.constraint_norm:
                     fisher_norm += (weight.grad * gw).sum()
-                weight.grad.data = gw
+                weight.grad.detach().copy_(gw)
                 if bias is not None:
                     if self.constraint_norm:
                         fisher_norm += (bias.grad * gb).sum()
-                    bias.grad.data = gb
+                    bias.grad.detach().copy_(gb)
             # Cleaning
             if 'x' in self.state[group['mod']]:
                 del self.state[group['mod']]['x']
@@ -90,7 +90,7 @@ class KFAC(Optimizer):
             scale = (1. / fisher_norm) ** 0.5
             for group in self.param_groups:
                 for param in group['params']:
-                    param.grad.data *= scale
+                    param.grad.detach().copy_(scale * param.grad)
         if update_stats:
             self._iteration_counter += 1
 
@@ -110,12 +110,12 @@ class KFAC(Optimizer):
             return self._precond_sua(weight, bias, group, state)
         ixxt = state['ixxt']
         iggt = state['iggt']
-        g = weight.grad.data
+        g = weight.grad.detach()
         s = g.shape
         if group['layer_type'] == 'Conv2d':
             g = g.contiguous().view(s[0], s[1]*s[2]*s[3])
         if bias is not None:
-            gb = bias.grad.data
+            gb = bias.grad.detach()
             g = torch.cat([g, gb.view(gb.shape[0], 1)], dim=1)
         g = torch.mm(torch.mm(iggt, g), ixxt)
         if group['layer_type'] == 'Conv2d':
@@ -132,9 +132,8 @@ class KFAC(Optimizer):
         """Preconditioning for KFAC SUA."""
         ixxt = state['ixxt']
         iggt = state['iggt']
-        g = weight.grad.data
+        g = weight.grad.detach()
         s = g.shape
-        mod = group['mod']
         g = g.permute(1, 0, 2, 3).contiguous()
         if bias is not None:
             gb = bias.grad.view(1, -1, 1, 1).expand(1, -1, s[2], s[3])
@@ -162,9 +161,9 @@ class KFAC(Optimizer):
                              stride=mod.stride)
             else:
                 x = x.view(x.shape[0], x.shape[1], -1)
-            x = x.data.permute(1, 0, 2).contiguous().view(x.shape[1], -1)
+            x = x.detach().permute(1, 0, 2).contiguous().view(x.shape[1], -1)
         else:
-            x = x.data.t()
+            x = x.detach().t()
         if mod.bias is not None:
             ones = torch.ones_like(x[:1])
             x = torch.cat([x, ones], dim=0)
@@ -176,11 +175,11 @@ class KFAC(Optimizer):
                                 alpha=self.alpha / float(x.shape[1]))
         # Computation of ggt
         if group['layer_type'] == 'Conv2d':
-            gy = gy.data.permute(1, 0, 2, 3)
+            gy = gy.detach().permute(1, 0, 2, 3)
             state['num_locations'] = gy.shape[2] * gy.shape[3]
             gy = gy.contiguous().view(gy.shape[0], -1)
         else:
-            gy = gy.data.t()
+            gy = gy.detach().t()
             state['num_locations'] = 1
         if self._iteration_counter == 0:
             state['ggt'] = torch.mm(gy, gy.t()) / float(gy.shape[1])
@@ -204,7 +203,7 @@ class KFAC(Optimizer):
         ixxt = (xxt + torch.diag(diag_xxt)).inverse()
         iggt = (ggt + torch.diag(diag_ggt)).inverse()
         return ixxt, iggt
-    
+
     def __del__(self):
         for handle in self._fwd_handles + self._bwd_handles:
             handle.remove()
