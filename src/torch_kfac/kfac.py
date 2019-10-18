@@ -50,7 +50,7 @@ class KFAC(Optimizer):
                 self.params.append(d)
         super().__init__(self.params, {})
 
-    def step(self, update_stats=True, update_params=True):
+    def step(self, update_stats=True, update_params=True, weights=None):
         """Performs one step of preconditioning."""
         fisher_norm = 0.
         for group in self.param_groups:
@@ -64,14 +64,14 @@ class KFAC(Optimizer):
             # Update convariances and inverses
             if update_stats:
                 if self._iteration_counter % self.update_freq == 0:
-                    self._compute_covs(group, state)
+                    self._compute_covs(group, state, weights=weights)
                     ixxt, iggt = self._inv_covs(state['xxt'], state['ggt'],
                                                 state['num_locations'])
                     state['ixxt'] = ixxt
                     state['iggt'] = iggt
                 else:
                     if self.alpha != 1:
-                        self._compute_covs(group, state)
+                        self._compute_covs(group, state, weights=weights)
             if update_params:
                 # Preconditionning
                 gw, gb = self._precond(weight, bias, group, state)
@@ -152,7 +152,7 @@ class KFAC(Optimizer):
             gb = None
         return g, gb
 
-    def _compute_covs(self, group, state):
+    def _compute_covs(self, group, state, weights=None):
         """Computes the covariances."""
         mod = group['mod']
         x = self.state[group['mod']]['x']
@@ -185,7 +185,10 @@ class KFAC(Optimizer):
             state['num_locations'] = gy.shape[2] * gy.shape[3]
             gy = gy.contiguous().view(gy.shape[0], -1)
         else:
-            gy = gy.detach().flatten(end_dim=-2).t()
+            gy = gy.detach()
+            if weights is not None:
+                gy = (gy.transpose(0, -1) / weights).transpose(0, -1)
+            gy = gy.flatten(end_dim=-2).t()
             state['num_locations'] = 1
         if self.centered_cov:
             gy = gy - gy.mean(dim=-1)[:, None]
