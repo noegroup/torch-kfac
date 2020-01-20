@@ -53,7 +53,9 @@ class KFAC(Optimizer):
     def step(self, update_stats=True, update_params=True, weights=None):
         """Performs one step of preconditioning."""
         fisher_norm = 0.
+        grad_norm = 0.
         for group in self.param_groups:
+            # print(group['mod'])
             # Getting parameters
             if len(group['params']) == 2:
                 weight, bias = group['params']
@@ -78,10 +80,14 @@ class KFAC(Optimizer):
                 # Updating gradients
                 if self.constraint_norm:
                     fisher_norm += (weight.grad * gw).sum()
+                    grad_norm += (weight.grad ** 2).sum()
+                print((gw/weight.grad).mean())
                 weight.grad.detach().copy_(gw)
                 if bias is not None:
                     if self.constraint_norm:
                         fisher_norm += (bias.grad * gb).sum()
+                        grad_norm += (bias.grad ** 2).sum()
+                    print((gb/bias.grad).mean())
                     bias.grad.detach().copy_(gb)
             # Cleaning
             if 'x' in self.state[group['mod']]:
@@ -90,7 +96,8 @@ class KFAC(Optimizer):
                 del self.state[group['mod']]['gy']
         # Eventually scale the norm of the gradients
         if update_params and self.constraint_norm:
-            scale = (1. / fisher_norm) ** 0.5
+            scale = grad_norm / fisher_norm
+            print('scale', scale)
             for group in self.param_groups:
                 for param in group['params']:
                     param.grad.detach().copy_(scale * param.grad)
@@ -120,7 +127,7 @@ class KFAC(Optimizer):
         if bias is not None:
             gb = bias.grad.detach()
             g = torch.cat([g, gb.view(gb.shape[0], 1)], dim=1)
-        g = torch.mm(torch.mm(iggt, g), ixxt)
+        g = iggt @ g @ ixxt
         if group['layer_type'] == 'Conv2d':
             g /= state['num_locations']
         if bias is not None:
@@ -179,6 +186,9 @@ class KFAC(Optimizer):
             state['xxt'].addmm_(mat1=x, mat2=x.t(),
                                 beta=(1. - self.alpha),
                                 alpha=self.alpha / N)
+            # print(mod, 'X', state['xxt'].shape)
+            # print(state['xxt'].min(), state['xxt'].max())
+            # print(state['xxt'].mean(), state['xxt'].std())
         # Computation of ggt
         if group['layer_type'] == 'Conv2d':
             gy = gy.detach().permute(1, 0, 2, 3)
@@ -198,21 +208,26 @@ class KFAC(Optimizer):
             state['ggt'].addmm_(mat1=gy, mat2=gy.t(),
                                 beta=(1. - self.alpha),
                                 alpha=self.alpha / N)
+            # print(mod, 'G', state['ggt'].shape)
+            # print(state['ggt'].min(), state['ggt'].max())
+            # print(state['ggt'].mean(), state['ggt'].std())
 
     def _inv_covs(self, xxt, ggt, num_locations):
         """Inverses the covariances."""
         # Computes pi
         pi = 1.0
         if self.pi:
-            tx = torch.trace(xxt) * ggt.shape[0]
-            tg = torch.trace(ggt) * xxt.shape[0]
-            pi = (tx / tg)
+            tx = xxt.trace() / (xxt.shape[0] + 1)
+            tg = ggt.trace() / ggt.shape[0]
+            pi = (tx / tg).sqrt()
+            # print(tx, tg)
         # Regularizes and inverse
         eps = self.eps / num_locations
-        diag_xxt = xxt.new(xxt.shape[0]).fill_((eps * pi) ** 0.5)
-        diag_ggt = ggt.new(ggt.shape[0]).fill_((eps / pi) ** 0.5)
+        diag_xxt = xxt.new(xxt.shape[0]).fill_(pi * eps ** 0.5)
+        diag_ggt = ggt.new(ggt.shape[0]).fill_(1 / pi * eps ** 0.5)
         ixxt = (xxt + torch.diag(diag_xxt)).inverse()
         iggt = (ggt + torch.diag(diag_ggt)).inverse()
+        # print(ixxt.trace() / ixxt.shape[0], iggt.trace() / iggt.shape[0])
         return ixxt, iggt
 
     def __del__(self):
